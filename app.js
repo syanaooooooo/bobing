@@ -24,6 +24,19 @@ const RANK_MEDALS = { '状元':'👑','对堂':'🎓','三红':'🔴','四进':'
 /* 头像配色（按人 id 哈希取色） */
 const AVATAR_COLORS = ['#D62828','#17A398','#118AB2','#E58E26','#2E8B57','#A4161A','#0E7C7B','#FF6B6B','#7d1113','#F6B93B'];
 
+/* 头像用可爱 emoji 池：每次打开 app 随机分配一遍，不持久化 */
+const AVATAR_EMOJI = ['🐱','🐶','🐰','🐻','🐼','🐨','🦁','🐯','🦊','🐷','🐵','🐔','🐧','🦉','🐢','🐙','🦀','🐬','🐳','🦋','🐝','🐸','🦄','🐮','🐹','🦔'];
+let avatarEmojiMap = {};
+function avatarEmoji(id) {
+  if (!avatarEmojiMap[id]) {
+    const used = new Set(Object.values(avatarEmojiMap));
+    const avail = AVATAR_EMOJI.filter(e => !used.has(e));
+    const pool = avail.length ? avail : AVATAR_EMOJI;
+    avatarEmojiMap[id] = pool[Math.floor(Math.random() * pool.length)];
+  }
+  return avatarEmojiMap[id];
+}
+
 /* ── 全局状态 ─────────────────────────────────────────── */
 let S = null;
 let currentTab = 'overview';
@@ -74,7 +87,6 @@ function avatarColor(id) {
   let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
-function initial(name) { return (name || '？').trim().slice(0, 1); }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function sha256(str) {
@@ -226,13 +238,15 @@ function viewOverview() {
     const txt = v > 0.005 ? `+${money(v)}` : v < -0.005 ? `-${money(-v)}` : money(0);
     const label = v > 0.005 ? '应收回' : v < -0.005 ? '需支出' : '已平';
     return `<div class="bal-row">
-      <span class="avatar" style="background:${avatarColor(p.id)}">${esc(initial(p.name))}</span>
+      <span class="avatar" style="background:${avatarColor(p.id)}">${avatarEmoji(p.id)}</span>
       <span class="nm">${esc(p.name)}</span>
       <span class="net ${cls}">${txt}<span style="font-size:10px;color:var(--ink-soft);margin-left:4px">${label}</span></span>
     </div>`;
   }).join('');
 
   return `
+    <div class="section-hd"><h2><span>🧧</span>账目总览</h2></div>
+
     <div class="settle-hero">
       <h2>💰 谁转给谁</h2>
       <div class="hint">按下面转一圈，全场账目一次结清</div>
@@ -292,7 +306,7 @@ function viewBobing() {
   const unassigned = bobingUnassigned();
 
   return `
-    <div class="section-hd"><h2><span>🎲</span>博饼奖金池</h2>
+    <div class="section-hd"><h2><span>🎲</span>博饼采购</h2>
       ${isAdmin ? '<button class="btn btn-teal btn-sm" data-act="bobing-setup">⚙️ 参与人</button>' : ''}
     </div>
 
@@ -324,11 +338,11 @@ function viewExpenses() {
   const body = list.length ? list.map(expCard).join('') : `
     <div class="empty">
       <div class="big">🧾</div>
-      <p>还没有额外账目<br>比如「LISHA 订房 60，ABC 请 DE 吃饭」</p>
+      <p>还没有其它账目<br>比如「LISHA 订房 60，ABC 请 DE 吃饭」</p>
       ${isAdmin ? '<button class="btn btn-primary" data-act="add-exp">➕ 记第一笔</button>' : '<div class="readonly-note">点右上角 🔒 解锁后可添加</div>'}
     </div>`;
   return `
-    <div class="section-hd"><h2><span>🧾</span>额外账目 <span style="font-size:12px;color:var(--ink-soft)">(${list.length})</span></h2></div>
+    <div class="section-hd"><h2><span>🧾</span>其它账目 <span style="font-size:12px;color:var(--ink-soft)">(${list.length})</span></h2></div>
     ${body}
     ${isAdmin && list.length ? '<button class="btn btn-fab" data-act="add-exp" title="记一笔">＋</button>' : ''}`;
 }
@@ -367,7 +381,7 @@ function viewPeople() {
     const ranks = S.bobing.prizes.filter(pr => (pr.buyers || []).includes(p.id)).map(pr => pr.rank);
     return `
     <div class="person-row">
-      <span class="avatar" style="background:${avatarColor(p.id)}">${esc(initial(p.name))}</span>
+      <span class="avatar" style="background:${avatarColor(p.id)}">${avatarEmoji(p.id)}</span>
       <div class="person-main">
         <span class="nm">${esc(p.name)}</span>
         ${ranks.length ? `<span class="tag-charge">🛒 负责 ${ranks.map(esc).join('/')}</span>` : ''}
@@ -380,7 +394,7 @@ function viewPeople() {
     </div>`;
   }).join('');
   return `
-    <div class="section-hd"><h2><span>🐚</span>参与成员 <span style="font-size:12px;color:var(--ink-soft)">(${S.people.length})</span></h2></div>
+    <div class="section-hd"><h2><span>🐚</span>成员管理 <span style="font-size:12px;color:var(--ink-soft)">(${S.people.length})</span></h2></div>
     ${rows}
     ${isAdmin ? '<button class="btn btn-gold btn-block" data-act="add-person" style="margin-top:8px">➕ 添加成员</button>'
               : '<div class="readonly-note">点右上角 🔒 解锁后可增删成员</div>'}`;
