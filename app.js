@@ -45,16 +45,15 @@ function seed() {
     admin_hash: '',                 // 首次解锁时设置
     people,
     bobing: {
-      person_in_charge: chargeId,   // 负责人
+      // 每个奖等自带购买负责人 buyers；一秀/二举各 2 人平分该奖数量
       prizes: [
-        { rank: '状元', unit: 100, qty: 1 },
-        { rank: '对堂', unit: 55,  qty: 2 },
-        { rank: '三红', unit: 25,  qty: 4 },
-        { rank: '四进', unit: 15,  qty: 8 },
-        { rank: '二举', unit: 3,   qty: 16 },
-        { rank: '一秀', unit: 1,   qty: 32 },
+        { rank: '状元', unit: 100, qty: 1,  buyers: [chargeId] },
+        { rank: '对堂', unit: 55,  qty: 2,  buyers: [chargeId] },
+        { rank: '三红', unit: 25,  qty: 4,  buyers: [chargeId] },
+        { rank: '四进', unit: 15,  qty: 8,  buyers: [chargeId] },
+        { rank: '二举', unit: 3,   qty: 16, buyers: [chargeId, ''] },
+        { rank: '一秀', unit: 1,   qty: 32, buyers: [chargeId, ''] },
       ],
-      payers: [{ person: chargeId, paid: 510 }],   // 负责人先垫付奖金池
       participants: people.map(p => p.id),          // 8 人平摊 → 人均 63.75
     },
     expenses: [],
@@ -96,12 +95,30 @@ async function commit(msg) {
 }
 
 /* ── 分账核心：把博饼当成一笔虚拟支出 ─────────────────── */
-function bobingTotal() { return S.bobing.prizes.reduce((s, p) => s + (+p.unit || 0) * (+p.qty || 0), 0); }
+function prizeCost(p) { return (+p.unit || 0) * (+p.qty || 0); }
+function bobingTotal() { return S.bobing.prizes.reduce((s, p) => s + prizeCost(p), 0); }
+
+/* 由各奖 buyers 推导出每人的垫付总额（一个奖多个负责人 → 均分该奖金额） */
+function bobingPayers() {
+  const m = {};
+  for (const p of S.bobing.prizes) {
+    const bs = (p.buyers || []).filter(Boolean);
+    if (!bs.length) continue;
+    const each = prizeCost(p) / bs.length;
+    bs.forEach(pid => m[pid] = (m[pid] || 0) + each);
+  }
+  return Object.entries(m).map(([person, paid]) => ({ person, paid }));
+}
+/* 尚未指定负责人的奖金（无人垫付，会导致账不平，用于提示） */
+function bobingUnassigned() {
+  return S.bobing.prizes.reduce((s, p) => s + ((p.buyers || []).filter(Boolean).length ? 0 : prizeCost(p)), 0);
+}
+
 function bobingItem() {
   return {
     id: 'bobing', title: '博饼奖金池', category: 'bobing',
     amount: bobingTotal(),
-    payers: S.bobing.payers || [],
+    payers: bobingPayers(),
     split: { mode: 'equal', among: S.bobing.participants || [] },
   };
 }
@@ -232,20 +249,35 @@ function viewBobing() {
   const parts = (b.participants || []).length || 1;
   const rows = b.prizes.map((p, i) => {
     const medal = RANK_MEDALS[p.rank] || '🎲';
-    const sub = (+p.unit || 0) * (+p.qty || 0);
     return `<tr>
       <td class="rank"><span class="medal">${medal}</span>${esc(p.rank)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="decimal" data-prize="${i}" data-k="unit" value="${p.unit}">` : money(p.unit)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="numeric" data-prize="${i}" data-k="qty" value="${p.qty}">` : p.qty}</td>
-      <td><b>${money(sub)}</b></td>
+      <td><b>${money(prizeCost(p))}</b></td>
     </tr>`;
   }).join('');
 
-  const payerTxt = (b.payers || []).map(p => `${esc(personName(p.person))} ${money(p.paid)}`).join('、') || '未设置';
+  // 各奖负责人（购买出钱）明细
+  const buyerRows = b.prizes.map(p => {
+    const medal = RANK_MEDALS[p.rank] || '🎲';
+    const bs = (p.buyers || []).filter(Boolean);
+    const cost = prizeCost(p);
+    let who;
+    if (!bs.length) who = `<span style="color:var(--red)">未指定</span>`;
+    else if (bs.length === 1) who = `${esc(personName(bs[0]))}<span class="sub-amt">${money(cost)}</span>`;
+    else who = `${bs.map(pid => esc(personName(pid))).join(' · ')}<span class="sub-amt">各 ${money(cost / bs.length)}</span>`;
+    return `<div class="buyer-row"><span class="br-rank">${medal} ${esc(p.rank)}</span><span class="br-who">${who}</span></div>`;
+  }).join('');
+
+  const payers = bobingPayers();
+  const payerTxt = payers.length
+    ? payers.map(p => `${esc(personName(p.person))} ${money(p.paid)}`).join('、')
+    : '未设置';
+  const unassigned = bobingUnassigned();
 
   return `
     <div class="section-hd"><h2><span>🎲</span>博饼奖金池</h2>
-      ${isAdmin ? '<button class="btn btn-teal btn-sm" data-act="bobing-setup">⚙️ 参与人/垫付</button>' : ''}
+      ${isAdmin ? '<button class="btn btn-teal btn-sm" data-act="bobing-setup">⚙️ 负责人/参与</button>' : ''}
     </div>
 
     <div class="card festive">
@@ -260,16 +292,18 @@ function viewBobing() {
         <div class="stat gold"><div class="val">${money(total / parts)}</div><div class="lab">人均分摊</div></div>
         <div class="stat teal"><div class="val">${parts}</div><div class="lab">参与人数</div></div>
       </div>
+    </div>
 
-      <div class="charge-row">
-        <span>🧾</span><span class="lab">负责人：</span><span>${esc(personName(b.person_in_charge))}</span>
-      </div>
-      <div class="charge-row" style="background:rgba(23,163,152,.10)">
-        <span>💵</span><span class="lab" style="color:var(--teal-deep)">垫付：</span><span>${payerTxt}</span>
+    <div class="card">
+      <div class="card-title"><span class="emoji">🛒</span>各奖负责人（购买出钱）</div>
+      <div class="buyer-list">${buyerRows}</div>
+      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金未指定负责人，账会不平</div>` : ''}
+      <div class="charge-row" style="background:rgba(23,163,152,.10);margin-top:12px">
+        <span>💵</span><span class="lab" style="color:var(--teal-deep)">合计垫付：</span><span>${payerTxt}</span>
       </div>
     </div>
 
-    <div class="readonly-note">奖金池按参与人平摊计入总账 · ${isAdmin ? '改单价/数量即时生效' : '仅管理员可编辑'}</div>`;
+    <div class="readonly-note">奖金池按参与人平摊计入总账 · ${isAdmin ? '改单价/数量即时生效；负责人在 ⚙️ 里设' : '仅管理员可编辑'}</div>`;
 }
 
 /* ── 账目 ─────────────────────────────────────────────── */
@@ -317,11 +351,12 @@ function expCard(e) {
 
 /* ── 成员 ─────────────────────────────────────────────── */
 function viewPeople() {
+  const buyerIds = new Set(bobingPayers().map(p => p.person));
   const rows = S.people.map(p => `
     <div class="person-row">
       <span class="avatar" style="background:${avatarColor(p.id)}">${esc(initial(p.name))}</span>
       <span class="nm">${esc(p.name)}</span>
-      ${p.id === S.bobing.person_in_charge ? '<span class="tag-charge">负责人</span>' : ''}
+      ${buyerIds.has(p.id) ? '<span class="tag-charge">🛒 购奖</span>' : ''}
       ${isAdmin ? `<button class="btn btn-ghost btn-sm" data-act="edit-person" data-id="${p.id}">✏️</button>
         <button class="btn btn-danger btn-sm" data-act="del-person" data-id="${p.id}">🗑️</button>` : ''}
     </div>`).join('');
@@ -649,16 +684,13 @@ function payerRow(p, amt) {
 function openBobingSetup() {
   const b = S.bobing;
   const parts = new Set(b.participants || []);
-  const payMap = Object.fromEntries((b.payers || []).map(p => [p.person, p.paid]));
   const total = bobingTotal();
+  // 草稿：每个奖的 buyers（至少 1 个占位空槽）
+  const pb = b.prizes.map(p => { const bs = (p.buyers || []).filter(Boolean); return bs.length ? bs : ['']; });
+
   const html = `
     <div class="modal-hd"><h3>⚙️ 博饼设置</h3><button class="modal-close" data-close>✕</button></div>
-    <div class="field">
-      <label>负责人</label>
-      <select class="select" id="b-charge">
-        ${S.people.map(p => `<option value="${p.id}" ${b.person_in_charge === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>
-    </div>
+
     <div class="field">
       <label>参与平摊的人 <span class="sub">奖金池 ${money(total)} 按这些人均分</span></label>
       <div class="pick-list" id="b-parts">
@@ -666,51 +698,62 @@ function openBobingSetup() {
           <span class="box">${parts.has(p.id) ? '✓' : ''}</span><span class="nm">${esc(p.name)}</span></div>`).join('')}
       </div>
     </div>
+
     <div class="field">
-      <label>谁垫付了奖金 <span class="sub">合计应 = ${money(total)}</span></label>
-      <div class="pick-list" id="b-pay">
-        ${S.people.map(p => `<div class="pick ${payMap[p.id] != null ? 'on' : ''}" data-pid="${p.id}">
-          <span class="box">${payMap[p.id] != null ? '✓' : ''}</span><span class="nm">${esc(p.name)}</span>
-          <input class="amt-in" type="number" inputmode="decimal" placeholder="垫付" value="${payMap[p.id] ?? ''}"></div>`).join('')}
-      </div>
-      <div class="pick-tools"><span class="mini-link" id="b-charge-pay">让负责人全垫</span></div>
-      <div class="balance-warn" id="b-warn"></div>
+      <label>各奖购买负责人 <span class="sub">多个负责人平分该奖金额</span></label>
+      <div id="b-prizes"></div>
     </div>
+
     <button class="btn btn-primary btn-block" id="b-save">保存</button>`;
   openModal(html);
   const $ = s => document.querySelector(s);
 
+  // 参与人勾选
   $('#b-parts').onclick = ev => { const r = ev.target.closest('.pick'); if (!r) return;
     const on = !r.classList.contains('on'); r.classList.toggle('on', on); r.querySelector('.box').textContent = on ? '✓' : ''; };
-  $('#b-pay').onclick = ev => { const r = ev.target.closest('.pick'); if (!r || ev.target.classList.contains('amt-in')) return;
-    const on = !r.classList.contains('on'); r.classList.toggle('on', on); r.querySelector('.box').textContent = on ? '✓' : '';
-    if (!on) r.querySelector('.amt-in').value = ''; warn(); };
-  $('#b-pay').addEventListener('input', ev => { if (ev.target.classList.contains('amt-in')) warn(); });
-  $('#b-charge-pay').onclick = () => {
-    const cid = $('#b-charge').value;
-    document.querySelectorAll('#b-pay .pick').forEach(r => {
-      const on = r.dataset.pid === cid; r.classList.toggle('on', on);
-      r.querySelector('.box').textContent = on ? '✓' : ''; r.querySelector('.amt-in').value = on ? total : '';
-    });
-    warn();
-  };
-  function warn() {
-    let sum = 0; document.querySelectorAll('#b-pay .pick.on .amt-in').forEach(i => sum += +i.value || 0);
-    const w = $('#b-warn'); const diff = Math.round((total - sum) * 100) / 100;
-    if (Math.abs(diff) < 0.01) { w.className = 'balance-warn ok'; w.textContent = '✓ 垫付合计 = 奖金总额'; }
-    else { w.className = 'balance-warn bad'; w.textContent = `垫付合计 ${money(sum)}，与奖金总额差 ${money(Math.abs(diff))}`; }
+
+  // 渲染各奖负责人选择器
+  const opts = extra => `<option value="">— 未指定 —</option>` +
+    S.people.map(p => `<option value="${p.id}"${extra === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+
+  function renderPrizes() {
+    $('#b-prizes').innerHTML = b.prizes.map((p, i) => {
+      const medal = RANK_MEDALS[p.rank] || '🎲';
+      const cost = prizeCost(p);
+      const n = pb[i].length;
+      const selects = pb[i].map((pid, j) => `
+        <div class="buyer-pick">
+          <select class="select buyer-sel" data-i="${i}" data-j="${j}">${opts(pid)}</select>
+          ${n > 1 ? `<button class="mini-x" data-rm="${i}:${j}">✕</button>` : ''}
+        </div>`).join('');
+      const eachTxt = n > 1 ? `每人 ${money(cost / n)}` : money(cost);
+      return `<div class="setup-prize">
+        <div class="sp-hd">${medal} ${esc(p.rank)} <span class="sub-amt">${money(cost)} · ${n}人 · ${eachTxt}</span></div>
+        <div class="sp-buyers">${selects}</div>
+        <span class="mini-link" data-add="${i}">＋ 再加一位负责人（平分）</span>
+      </div>`;
+    }).join('');
   }
-  warn();
+  renderPrizes();
+
+  $('#b-prizes').onchange = ev => {
+    const s = ev.target.closest('.buyer-sel'); if (!s) return;
+    pb[+s.dataset.i][+s.dataset.j] = s.value;
+    renderPrizes();
+  };
+  $('#b-prizes').onclick = ev => {
+    const add = ev.target.closest('[data-add]');
+    if (add) { pb[+add.dataset.add].push(''); renderPrizes(); return; }
+    const rm = ev.target.closest('[data-rm]');
+    if (rm) { const [i, j] = rm.dataset.rm.split(':').map(Number); pb[i].splice(j, 1); if (!pb[i].length) pb[i] = ['']; renderPrizes(); }
+  };
+
   $('#b-save').onclick = () => {
     const parts2 = [...document.querySelectorAll('#b-parts .pick.on')].map(r => r.dataset.pid);
     if (!parts2.length) { toast('至少选一个参与人'); return; }
-    const payers = [...document.querySelectorAll('#b-pay .pick.on')].map(r => ({
-      person: r.dataset.pid, paid: Math.round((+r.querySelector('.amt-in').value || 0) * 100) / 100 })).filter(p => p.paid > 0);
-    const sum = payers.reduce((a, b) => a + b.paid, 0);
-    if (payers.length && Math.abs(sum - total) > 0.01) { toast('垫付合计要等于奖金总额'); return; }
-    S.bobing.person_in_charge = $('#b-charge').value;
+    // 去重、去空
+    b.prizes.forEach((p, i) => { p.buyers = [...new Set(pb[i].filter(Boolean))]; });
     S.bobing.participants = parts2;
-    S.bobing.payers = payers;
     closeModal(); commit('博饼设置已保存 ✓');
   };
 }
@@ -737,13 +780,12 @@ function openPersonModal(person) {
 function delPerson(id) {
   if (S.people.length <= 1) { toast('至少保留一名成员'); return; }
   const used = S.expenses.some(e => (e.payers || []).some(p => p.person === id) ||
-    Object.keys(sharesOf(e)).includes(id)) || (S.bobing.payers || []).some(p => p.person === id);
+    Object.keys(sharesOf(e)).includes(id)) || S.bobing.prizes.some(p => (p.buyers || []).includes(id));
   const name = personName(id);
-  if (!confirm(`删除「${name}」？${used ? '\n⚠️ TA 出现在某些账目里，删除后那些账的分摊会变。' : ''}`)) return;
+  if (!confirm(`删除「${name}」？${used ? '\n⚠️ TA 出现在某些账目/购奖里，删除后那些账的分摊会变。' : ''}`)) return;
   S.people = S.people.filter(p => p.id !== id);
   S.bobing.participants = (S.bobing.participants || []).filter(x => x !== id);
-  S.bobing.payers = (S.bobing.payers || []).filter(p => p.person !== id);
-  if (S.bobing.person_in_charge === id) S.bobing.person_in_charge = S.people[0]?.id || '';
+  S.bobing.prizes.forEach(p => { p.buyers = (p.buyers || []).filter(x => x !== id); }); // 清理购奖负责人
   // 清理账目引用
   S.expenses.forEach(e => {
     e.payers = (e.payers || []).filter(p => p.person !== id);
@@ -774,12 +816,25 @@ function toast(msg, ms = 1800) {
   toastTimer = setTimeout(() => root.innerHTML = '', ms);
 }
 
+/* 迁移旧数据结构：老版本用 bobing.person_in_charge + bobing.payers，
+   新版本改为每个奖 prize.buyers[]。缺 buyers 时用旧负责人补齐。 */
+function migrate(data) {
+  if (!data?.bobing?.prizes) return data;
+  const b = data.bobing;
+  const fallback = b.person_in_charge || (b.payers || [])[0]?.person || '';
+  b.prizes.forEach(p => {
+    if (!Array.isArray(p.buyers)) p.buyers = fallback ? [fallback] : [];
+  });
+  delete b.person_in_charge; delete b.payers;
+  return data;
+}
+
 /* ============================================================
    启动：本地优先渲染 → 云端拉取覆盖
    ============================================================ */
 async function boot() {
   const local = localStorage.getItem(LS_KEY);
-  S = local ? JSON.parse(local) : seed();
+  S = migrate(local ? JSON.parse(local) : seed());
   render();
 
   const cloud = await window.loadFromCloud();
@@ -787,7 +842,7 @@ async function boot() {
     // 云端为准（单写者）；若本地更新更晚则保留本地
     const cloudTime = cloud.updated_at || '';
     const localTime = S.updated_at || '';
-    if (!local || cloudTime >= localTime) { S = cloud; saveLocal(); render(); }
+    if (!local || cloudTime >= localTime) { S = migrate(cloud); saveLocal(); render(); }
   } else if (!local) {
     // 云端空且本地空 → 首次，把种子写上去
     saveLocal();
@@ -799,7 +854,7 @@ async function boot() {
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && !document.querySelector('.modal-mask')) {
     const cloud = await window.loadFromCloud();
-    if (cloud && cloud.people && (cloud.updated_at || '') > (S.updated_at || '')) { S = cloud; saveLocal(); render(); }
+    if (cloud && cloud.people && (cloud.updated_at || '') > (S.updated_at || '')) { S = migrate(cloud); saveLocal(); render(); }
   }
 });
 

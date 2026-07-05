@@ -30,7 +30,18 @@
   --font-body:  'Noto Sans SC', system-ui, sans-serif;
   --font-fun:   'ZCOOL KuaiLe', 'Noto Sans SC', sans-serif;
   --font-brush: 'Ma Shan Zheng', 'Noto Sans SC', serif;
+  --font-num:   'Rubik', 'Noto Sans SC', system-ui, sans-serif; /* 规整数字：清晰、等宽数位 */
 }
+
+/* 所有金额/数字统一用规整字体 + 等宽数位，对齐好认 */
+.stat .val, .txn .amt, .exp-amt, .bal-row .net,
+.prize-table td b, .prize-table tfoot td, .sub-amt {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .3px;
+}
+.stat .val { font-weight: 700; }
+.txn .amt, .exp-amt, .prize-table tfoot td { font-weight: 600; }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; padding: 0; }
@@ -215,6 +226,31 @@ body {
   font-size: 14px;
 }
 .charge-row .lab { color: var(--red-deep); font-weight: 700; }
+
+/* 各奖负责人明细 */
+.buyer-list { display: flex; flex-direction: column; }
+.buyer-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 4px; border-bottom: 1.5px dashed var(--line); font-size: 14px;
+}
+.buyer-row:last-child { border-bottom: none; }
+.br-rank { font-family: var(--font-fun); color: var(--red-deep); white-space: nowrap; }
+.br-who { text-align: right; }
+.sub-amt { color: var(--ink-soft); font-size: 12px; margin-left: 6px; }
+
+/* 博饼设置：各奖负责人选择 */
+.setup-prize {
+  border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 11px; margin-bottom: 10px;
+  background: #fff;
+}
+.sp-hd { font-family: var(--font-fun); color: var(--red-deep); font-size: 14px; margin-bottom: 8px; }
+.sp-buyers { display: flex; flex-direction: column; gap: 7px; margin-bottom: 6px; }
+.buyer-pick { display: flex; align-items: center; gap: 8px; }
+.buyer-pick .select { flex: 1; }
+.mini-x {
+  border: 1.5px solid var(--line); background: var(--cream); color: var(--red);
+  width: 32px; height: 32px; border-radius: 9px; font-size: 14px; cursor: pointer; flex: 0 0 32px;
+}
 
 /* ── 账目列表 ─────────────────────────────────────────── */
 .exp-card {
