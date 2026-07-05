@@ -39,8 +39,8 @@ function seed() {
   const chargeId = people[0].id;
   return {
     version: 1,
-    title: '2026 博饼分账',
-    subtitle: '南洋博饼 · 中秋分账',
+    title: '2026 博饼',
+    subtitle: '',
     currency: CURRENCY,
     admin_hash: '',                 // 首次解锁时设置
     people,
@@ -188,7 +188,9 @@ function settle(bal) {
    ============================================================ */
 function render() {
   document.getElementById('app-title').textContent = S.title || '博饼分账';
-  document.getElementById('app-sub').textContent = S.subtitle || '';
+  const sub = document.getElementById('app-sub');
+  sub.textContent = S.subtitle || '';
+  sub.classList.toggle('hide', !S.subtitle);
   const lb = document.getElementById('lock-btn');
   lb.textContent = isAdmin ? '🔓' : '🔒';
   lb.classList.toggle('unlocked', isAdmin);
@@ -272,24 +274,15 @@ function viewBobing() {
   const parts = (b.participants || []).length || 1;
   const rows = b.prizes.map((p, i) => {
     const medal = RANK_MEDALS[p.rank] || '🎲';
+    const bs = (p.buyers || []).filter(Boolean);
+    const owner = bs.length ? bs.map(pid => esc(personName(pid))).join('/') : `<span style="color:var(--red)">未定</span>`;
     return `<tr>
       <td class="rank"><span class="medal">${medal}</span>${esc(p.rank)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="decimal" data-prize="${i}" data-k="unit" value="${p.unit}">` : money(p.unit)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="numeric" data-prize="${i}" data-k="qty" value="${p.qty}">` : p.qty}</td>
       <td><b>${money(prizeCost(p))}</b></td>
+      <td class="owner">${owner}</td>
     </tr>`;
-  }).join('');
-
-  // 各奖负责人（购买出钱）明细
-  const buyerRows = b.prizes.map(p => {
-    const medal = RANK_MEDALS[p.rank] || '🎲';
-    const bs = (p.buyers || []).filter(Boolean);
-    const cost = prizeCost(p);
-    let who;
-    if (!bs.length) who = `<span style="color:var(--red)">未指定</span>`;
-    else if (bs.length === 1) who = `${esc(personName(bs[0]))}<span class="sub-amt">${money(cost)}</span>`;
-    else who = `${bs.map(pid => esc(personName(pid))).join(' · ')}<span class="sub-amt">各 ${money(cost / bs.length)}</span>`;
-    return `<div class="buyer-row"><span class="br-rank">${medal} ${esc(p.rank)}</span><span class="br-who">${who}</span></div>`;
   }).join('');
 
   const payers = bobingPayers();
@@ -300,14 +293,14 @@ function viewBobing() {
 
   return `
     <div class="section-hd"><h2><span>🎲</span>博饼奖金池</h2>
-      ${isAdmin ? '<button class="btn btn-teal btn-sm" data-act="bobing-setup">⚙️ 负责人/参与</button>' : ''}
+      ${isAdmin ? '<button class="btn btn-teal btn-sm" data-act="bobing-setup">⚙️ 参与人</button>' : ''}
     </div>
 
     <div class="card festive">
       <table class="prize-table">
-        <thead><tr><th>奖等</th><th>单价</th><th>数量</th><th>单项总价</th></tr></thead>
+        <thead><tr><th>奖等</th><th>单价</th><th>数量</th><th>单项总价</th><th>负责人</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr><td class="rank">合计</td><td></td><td></td><td>${money(total)}</td></tr></tfoot>
+        <tfoot><tr><td class="rank">合计</td><td></td><td></td><td>${money(total)}</td><td></td></tr></tfoot>
       </table>
 
       <div class="prize-foot">
@@ -315,18 +308,14 @@ function viewBobing() {
         <div class="stat gold"><div class="val">${money(total / parts)}</div><div class="lab">人均分摊</div></div>
         <div class="stat teal"><div class="val">${parts}</div><div class="lab">参与人数</div></div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-title"><span class="emoji">🛒</span>各奖负责人（购买出钱）</div>
-      <div class="buyer-list">${buyerRows}</div>
-      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金未指定负责人，账会不平</div>` : ''}
+      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金未指定负责人，账会不平 · 去「成员」页设置</div>` : ''}
       <div class="charge-row" style="background:rgba(23,163,152,.10);margin-top:12px">
         <span>💵</span><span class="lab" style="color:var(--teal-deep)">合计垫付：</span><span>${payerTxt}</span>
       </div>
     </div>
 
-    <div class="readonly-note">奖金池按参与人平摊计入总账 · ${isAdmin ? '改单价/数量即时生效；负责人在 ⚙️ 里设' : '仅管理员可编辑'}</div>`;
+    <div class="readonly-note">负责人在「🐚 成员」页设置 · ${isAdmin ? '改单价/数量即时生效' : '仅管理员可编辑'}</div>`;
 }
 
 /* ── 账目 ─────────────────────────────────────────────── */
@@ -374,15 +363,22 @@ function expCard(e) {
 
 /* ── 成员 ─────────────────────────────────────────────── */
 function viewPeople() {
-  const buyerIds = new Set(bobingPayers().map(p => p.person));
-  const rows = S.people.map(p => `
+  const rows = S.people.map(p => {
+    const ranks = S.bobing.prizes.filter(pr => (pr.buyers || []).includes(p.id)).map(pr => pr.rank);
+    return `
     <div class="person-row">
       <span class="avatar" style="background:${avatarColor(p.id)}">${esc(initial(p.name))}</span>
-      <span class="nm">${esc(p.name)}</span>
-      ${buyerIds.has(p.id) ? '<span class="tag-charge">🛒 购奖</span>' : ''}
-      ${isAdmin ? `<button class="btn btn-ghost btn-sm" data-act="edit-person" data-id="${p.id}">✏️</button>
-        <button class="btn btn-danger btn-sm" data-act="del-person" data-id="${p.id}">🗑️</button>` : ''}
-    </div>`).join('');
+      <div class="person-main">
+        <span class="nm">${esc(p.name)}</span>
+        ${ranks.length ? `<span class="tag-charge">🛒 负责 ${ranks.map(esc).join('/')}</span>` : ''}
+      </div>
+      <div class="person-btns">
+        ${isAdmin ? `<button class="btn btn-teal btn-sm" data-act="person-prizes" data-id="${p.id}">🎲 负责奖项</button>
+          <button class="btn btn-ghost btn-sm" data-act="edit-person" data-id="${p.id}">✏️</button>
+          <button class="btn btn-danger btn-sm" data-act="del-person" data-id="${p.id}">🗑️</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
   return `
     <div class="section-hd"><h2><span>🐚</span>参与成员 <span style="font-size:12px;color:var(--ink-soft)">(${S.people.length})</span></h2></div>
     ${rows}
@@ -418,6 +414,7 @@ function onActionClick(ev) {
   else if (act === 'edit-person') openPersonModal(S.people.find(p => p.id === id));
   else if (act === 'del-person') delPerson(id);
   else if (act === 'bobing-setup') openBobingSetup();
+  else if (act === 'person-prizes') openPersonPrizesModal(id);
   else if (act === 'quick-backup') quickBackup();
   else if (act === 'open-backup') openBackupModal();
 }
@@ -786,17 +783,14 @@ function payerRow(p, amt) {
     <input class="amt-in" type="number" inputmode="decimal" placeholder="垫付" value="${on ? amt : ''}"></div>`;
 }
 
-/* ── 博饼参与人/负责人/垫付设置 ───────────────────────── */
+/* ── 博饼参与人设置（谁平摊奖金池；各奖购买负责人在「成员」页设置）── */
 function openBobingSetup() {
   const b = S.bobing;
   const parts = new Set(b.participants || []);
   const total = bobingTotal();
-  // 草稿：每个奖的 buyers（至少 1 个占位空槽）
-  const pb = b.prizes.map(p => { const bs = (p.buyers || []).filter(Boolean); return bs.length ? bs : ['']; });
 
   const html = `
-    <div class="modal-hd"><h3>⚙️ 博饼设置</h3><button class="modal-close" data-close>✕</button></div>
-
+    <div class="modal-hd"><h3>⚙️ 参与人设置</h3><button class="modal-close" data-close>✕</button></div>
     <div class="field">
       <label>参与平摊的人 <span class="sub">奖金池 ${money(total)} 按这些人均分</span></label>
       <div class="pick-list" id="b-parts">
@@ -804,63 +798,53 @@ function openBobingSetup() {
           <span class="box">${parts.has(p.id) ? '✓' : ''}</span><span class="nm">${esc(p.name)}</span></div>`).join('')}
       </div>
     </div>
-
-    <div class="field">
-      <label>各奖购买负责人 <span class="sub">多个负责人平分该奖金额</span></label>
-      <div id="b-prizes"></div>
-    </div>
-
     <button class="btn btn-primary btn-block" id="b-save">保存</button>`;
   openModal(html);
   const $ = s => document.querySelector(s);
 
-  // 参与人勾选
   $('#b-parts').onclick = ev => { const r = ev.target.closest('.pick'); if (!r) return;
     const on = !r.classList.contains('on'); r.classList.toggle('on', on); r.querySelector('.box').textContent = on ? '✓' : ''; };
-
-  // 渲染各奖负责人选择器
-  const opts = extra => `<option value="">— 未指定 —</option>` +
-    S.people.map(p => `<option value="${p.id}"${extra === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
-
-  function renderPrizes() {
-    $('#b-prizes').innerHTML = b.prizes.map((p, i) => {
-      const medal = RANK_MEDALS[p.rank] || '🎲';
-      const cost = prizeCost(p);
-      const n = pb[i].length;
-      const selects = pb[i].map((pid, j) => `
-        <div class="buyer-pick">
-          <select class="select buyer-sel" data-i="${i}" data-j="${j}">${opts(pid)}</select>
-          ${n > 1 ? `<button class="mini-x" data-rm="${i}:${j}">✕</button>` : ''}
-        </div>`).join('');
-      const eachTxt = n > 1 ? `每人 ${money(cost / n)}` : money(cost);
-      return `<div class="setup-prize">
-        <div class="sp-hd">${medal} ${esc(p.rank)} <span class="sub-amt">${money(cost)} · ${n}人 · ${eachTxt}</span></div>
-        <div class="sp-buyers">${selects}</div>
-        <span class="mini-link" data-add="${i}">＋ 再加一位负责人（平分）</span>
-      </div>`;
-    }).join('');
-  }
-  renderPrizes();
-
-  $('#b-prizes').onchange = ev => {
-    const s = ev.target.closest('.buyer-sel'); if (!s) return;
-    pb[+s.dataset.i][+s.dataset.j] = s.value;
-    renderPrizes();
-  };
-  $('#b-prizes').onclick = ev => {
-    const add = ev.target.closest('[data-add]');
-    if (add) { pb[+add.dataset.add].push(''); renderPrizes(); return; }
-    const rm = ev.target.closest('[data-rm]');
-    if (rm) { const [i, j] = rm.dataset.rm.split(':').map(Number); pb[i].splice(j, 1); if (!pb[i].length) pb[i] = ['']; renderPrizes(); }
-  };
 
   $('#b-save').onclick = () => {
     const parts2 = [...document.querySelectorAll('#b-parts .pick.on')].map(r => r.dataset.pid);
     if (!parts2.length) { toast('至少选一个参与人'); return; }
-    // 去重、去空
-    b.prizes.forEach((p, i) => { p.buyers = [...new Set(pb[i].filter(Boolean))]; });
     S.bobing.participants = parts2;
-    closeModal(); commit('博饼设置已保存 ✓');
+    closeModal(); commit('参与人已保存 ✓');
+  };
+}
+
+/* ── 各奖购买负责人设置（从「成员」页某人点进来，勾选 TA 负责哪些奖）── */
+function openPersonPrizesModal(personId) {
+  const rows = S.bobing.prizes.map((p, i) => {
+    const on = (p.buyers || []).includes(personId);
+    const medal = RANK_MEDALS[p.rank] || '🎲';
+    const bs = (p.buyers || []).filter(Boolean);
+    const shareTxt = on && bs.length > 1 ? `<span class="sub-amt">与 ${bs.filter(x => x !== personId).map(personName).join('/')} 平分</span>` : '';
+    return `<div class="pick ${on ? 'on' : ''}" data-i="${i}">
+      <span class="box">${on ? '✓' : ''}</span>
+      <span class="nm">${medal} ${esc(p.rank)} <span class="sub-amt">${money(prizeCost(p))}</span>${shareTxt}</span>
+    </div>`;
+  });
+  openModal(`
+    <div class="modal-hd"><h3>🎲 ${esc(personName(personId))} 负责购买</h3><button class="modal-close" data-close>✕</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px">勾选 TA 负责购买的奖等；一个奖多人勾选则平分那笔钱。</p>
+    <div class="pick-list" id="pp-list">${rows.join('')}</div>
+    <button class="btn btn-primary btn-block" id="pp-save" style="margin-top:14px">保存</button>`);
+
+  document.getElementById('pp-list').onclick = ev => {
+    const r = ev.target.closest('.pick'); if (!r) return;
+    r.classList.toggle('on');
+    r.querySelector('.box').textContent = r.classList.contains('on') ? '✓' : '';
+  };
+  document.getElementById('pp-save').onclick = () => {
+    document.querySelectorAll('#pp-list .pick').forEach(r => {
+      const p = S.bobing.prizes[+r.dataset.i];
+      const on = r.classList.contains('on');
+      const bs = new Set((p.buyers || []).filter(Boolean));
+      if (on) bs.add(personId); else bs.delete(personId);
+      p.buyers = [...bs];
+    });
+    closeModal(); commit('负责奖项已保存 ✓');
   };
 }
 
@@ -932,6 +916,9 @@ function migrate(data) {
     if (!Array.isArray(p.buyers)) p.buyers = fallback ? [fallback] : [];
   });
   delete b.person_in_charge; delete b.payers;
+  // 旧标题/副标题一次性纠正为精简版
+  if (data.title === '2026 博饼分账') data.title = '2026 博饼';
+  if (data.subtitle === '南洋博饼 · 中秋分账') data.subtitle = '';
   return data;
 }
 

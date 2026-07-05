@@ -159,7 +159,7 @@ body {
 .txn .who { font-weight: 700; }
 .txn .arrow { color: var(--gold-bright); font-weight: 700; }
 .txn .amt {
-  margin-left: auto; font-family: var(--font-fun); font-size: 17px;
+  margin-left: auto; font-family: var(--font-num); font-size: 17px;
   color: var(--gold-bright); white-space: nowrap;
 }
 .settle-clear { text-align: center; padding: 14px 6px; font-size: 15px; }
@@ -171,7 +171,7 @@ body {
   border-radius: var(--radius-sm); padding: 12px 10px; text-align: center;
   box-shadow: var(--shadow-sm);
 }
-.stat .val { font-family: var(--font-fun); font-size: 22px; color: var(--red-deep); line-height: 1.1; }
+.stat .val { font-family: var(--font-num); font-weight: 700; font-size: 22px; color: var(--red-deep); line-height: 1.1; }
 .stat .lab { font-size: 11px; color: var(--ink-soft); margin-top: 3px; }
 .stat.gold  .val { color: var(--gold-deep); }
 .stat.teal  .val { color: var(--teal-deep); }
@@ -188,7 +188,7 @@ body {
   display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 700;
 }
 .bal-row .nm { font-weight: 500; }
-.bal-row .net { margin-left: auto; font-family: var(--font-fun); font-size: 15px; }
+.bal-row .net { margin-left: auto; font-family: var(--font-num); font-size: 15px; }
 .net.pos { color: var(--emerald); }
 .net.neg { color: var(--red); }
 .net.zero { color: var(--ink-soft); }
@@ -214,7 +214,7 @@ body {
   background: #fff;
 }
 .prize-table tfoot td {
-  font-family: var(--font-fun); font-size: 15px; color: var(--red-deep);
+  font-family: var(--font-num); font-weight: 600; font-size: 15px; color: var(--red-deep);
   border-top: 2px solid var(--gold); border-bottom: none; padding-top: 10px;
 }
 .prize-foot { display: flex; gap: 10px; margin-top: 12px; }
@@ -227,15 +227,7 @@ body {
 }
 .charge-row .lab { color: var(--red-deep); font-weight: 700; }
 
-/* 各奖负责人明细 */
-.buyer-list { display: flex; flex-direction: column; }
-.buyer-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 4px; border-bottom: 1.5px dashed var(--line); font-size: 14px;
-}
-.buyer-row:last-child { border-bottom: none; }
-.br-rank { font-family: var(--font-fun); color: var(--red-deep); white-space: nowrap; }
-.br-who { text-align: right; }
+.prize-table td.owner { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
 .sub-amt { color: var(--ink-soft); font-size: 12px; margin-left: 6px; }
 
 /* 博饼设置：各奖负责人选择 */
@@ -278,7 +270,7 @@ body {
 .exp-main { flex: 1; min-width: 0; }
 .exp-title { font-family: var(--font-fun); font-size: 16px; color: var(--ink); }
 .exp-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-.exp-amt { font-family: var(--font-fun); font-size: 18px; color: var(--red-deep); white-space: nowrap; }
+.exp-amt { font-family: var(--font-num); font-weight: 600; font-size: 18px; color: var(--red-deep); white-space: nowrap; }
 .exp-flow {
   margin-top: 9px; font-size: 12.5px; color: var(--ink-soft);
   border-top: 1.5px dashed var(--line); padding-top: 8px; line-height: 1.6;
@@ -294,7 +286,7 @@ body {
 
 /* ── 成员 ─────────────────────────────────────────────── */
 .person-row {
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
   background: var(--paper); border: 2px solid var(--line); border-radius: var(--radius-sm);
   padding: 10px 12px; margin-bottom: 10px; box-shadow: var(--shadow-sm);
 }
@@ -302,11 +294,13 @@ body {
   width: 36px; height: 36px; border-radius: 50%; flex: 0 0 36px;
   display: grid; place-items: center; color: #fff; font-weight: 700;
 }
-.person-row .nm { font-weight: 500; flex: 1; }
+.person-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.person-row .nm { font-weight: 500; }
 .person-row .tag-charge {
   font-size: 10px; background: var(--gold); color: var(--ink); padding: 2px 7px;
-  border-radius: 10px; font-weight: 700;
+  border-radius: 10px; font-weight: 700; align-self: flex-start;
 }
+.person-btns { display: flex; gap: 6px; flex: 0 0 auto; }
 
 /* ── 按钮 ─────────────────────────────────────────────── */
 .btn {
