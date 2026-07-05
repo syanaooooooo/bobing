@@ -21,8 +21,18 @@ const catOf = id => CATEGORIES.find(c => c.id === id) || CATEGORIES[5];
 /* 博饼六个奖等 + 奖牌 */
 const RANK_MEDALS = { '状元':'👑','对堂':'🎓','三红':'🔴','四进':'🀄','二举':'🎏','一秀':'🌸' };
 
-/* 头像配色（按人 id 哈希取色） */
+/* 头像配色池：每次打开 app 随机分配一遍，不持久化 */
 const AVATAR_COLORS = ['#D62828','#17A398','#118AB2','#E58E26','#2E8B57','#A4161A','#0E7C7B','#FF6B6B','#7d1113','#F6B93B'];
+let avatarColorMap = {};
+function avatarColor(id) {
+  if (!avatarColorMap[id]) {
+    const used = new Set(Object.values(avatarColorMap));
+    const avail = AVATAR_COLORS.filter(c => !used.has(c));
+    const pool = avail.length ? avail : AVATAR_COLORS;
+    avatarColorMap[id] = pool[Math.floor(Math.random() * pool.length)];
+  }
+  return avatarColorMap[id];
+}
 
 /* 头像用可爱 emoji 池：每次打开 app 随机分配一遍，不持久化 */
 const AVATAR_EMOJI = ['🐱','🐶','🐰','🐻','🐼','🐨','🦁','🐯','🦊','🐷','🐵','🐔','🐧','🦉','🐢','🐙','🦀','🐬','🐳','🦋','🐝','🐸','🦄','🐮','🐹','🦔'];
@@ -83,10 +93,6 @@ function money(v) {
   return (S?.currency || CURRENCY) + s;
 }
 function personName(id) { const p = S.people.find(x => x.id === id); return p ? p.name : '？'; }
-function avatarColor(id) {
-  let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
-}
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function sha256(str) {
