@@ -252,6 +252,17 @@ body {
   width: 32px; height: 32px; border-radius: 9px; font-size: 14px; cursor: pointer; flex: 0 0 32px;
 }
 
+/* 备份管理 */
+.slot-list { display: flex; flex-direction: column; gap: 8px; }
+.slot-row {
+  display: flex; align-items: center; gap: 10px;
+  border: 1.5px solid var(--line); border-radius: 12px; padding: 9px 11px; background: #fff;
+}
+.slot-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.slot-info b { font-size: 14px; }
+.slot-info .sub-amt { margin-left: 0; }
+.slot-btns { display: flex; gap: 6px; flex: 0 0 auto; }
+
 /* ── 账目列表 ─────────────────────────────────────────── */
 .exp-card {
   background: var(--paper); border: 2px solid var(--line); border-radius: var(--radius);

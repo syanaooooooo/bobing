@@ -85,13 +85,24 @@ async function sha256(str) {
 /* ── 持久化 + 同步 ────────────────────────────────────── */
 function saveLocal() { localStorage.setItem(LS_KEY, JSON.stringify(S)); }
 
-/* 管理员写入：本地 + 云端 */
+/* 管理员写入：本地 + 云端（并每日自动备份一次） */
 async function commit(msg) {
   S.updated_at = new Date().toISOString();
   saveLocal();
   render();
   const ok = await window.saveToCloud(S);
   toast(ok ? (msg || '已保存 ✓') : '云端保存失败，仅本地', ok ? 2000 : 3000);
+  if (ok) autoBackup();
+}
+
+/* 每日自动备份：当天第一次写入时存一份 bobing_auto_YYYY-MM-DD */
+async function autoBackup() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem('bobing_auto_date') === today) return;
+  try {
+    await window.saveSnapshot('bobing_auto_' + today, S);
+    localStorage.setItem('bobing_auto_date', today);
+  } catch (e) { console.warn(e); }
 }
 
 /* ── 分账核心：把博饼当成一笔虚拟支出 ─────────────────── */
@@ -237,8 +248,20 @@ function viewOverview() {
       <div class="bal-list">${balHtml}</div>
     </div>
 
+    ${isAdmin ? `
+    <div class="card">
+      <div class="card-title"><span class="emoji">☁️</span>云端备份与恢复</div>
+      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px">
+        数据实时存在云端（Supabase），换设备/清缓存都不丢。每天首次改动会自动存一份历史备份。
+      </p>
+      <div class="row2">
+        <button class="btn btn-teal" data-act="quick-backup">📸 立即备份</button>
+        <button class="btn btn-gold" data-act="open-backup">🗂️ 备份管理</button>
+      </div>
+    </div>` : ''}
+
     <div class="readonly-note">
-      ${isAdmin ? '🔓 管理员模式：可在「博饼 / 账目 / 成员」页编辑' : '👀 只读模式 · 点右上角 🔒 输入密码可编辑'}
+      ${isAdmin ? '🔓 管理员模式 · 数据已同步云端 ✓' : '👀 只读模式 · 点右上角 🔒 输入密码可编辑'}
     </div>`;
 }
 
@@ -395,6 +418,89 @@ function onActionClick(ev) {
   else if (act === 'edit-person') openPersonModal(S.people.find(p => p.id === id));
   else if (act === 'del-person') delPerson(id);
   else if (act === 'bobing-setup') openBobingSetup();
+  else if (act === 'quick-backup') quickBackup();
+  else if (act === 'open-backup') openBackupModal();
+}
+
+/* ── 立即备份：存一份带时间戳的手动备份 ───────────────── */
+async function quickBackup() {
+  try {
+    await window.saveSnapshot('bobing_manual_' + new Date().toISOString(), S);
+    toast('已备份到云端 ✓');
+  } catch (e) { toast('备份失败：' + e.message, 3000); }
+}
+
+/* ── 备份管理弹窗 ─────────────────────────────────────── */
+let _snaps = [];
+function snapMeta(d) { return `${d?.people?.length || 0}人 · ${(d?.expenses?.length || 0)}笔账`; }
+function friendlyName(name) {
+  if (name.startsWith('bobing_slot_')) return '存档位 ' + name.slice(-1);
+  if (name.startsWith('bobing_auto_')) return '每日自动 ' + name.slice('bobing_auto_'.length);
+  if (name.startsWith('bobing_manual_')) return '手动备份';
+  if (name.startsWith('bobing_pre_restore_')) return '恢复前存档';
+  return name;
+}
+function fmtTime(iso) {
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function openBackupModal() {
+  openModal(`
+    <div class="modal-hd"><h3>🗂️ 备份管理</h3><button class="modal-close" data-close>✕</button></div>
+    <div class="field"><label>手动存档位 <span class="sub">覆盖式，共 3 位</span></label><div id="slots" class="slot-list">加载中…</div></div>
+    <div class="field"><label>历史备份 <span class="sub">每日自动 / 手动 / 恢复前</span></label><div id="snaps" class="slot-list">加载中…</div></div>`);
+
+  // 弹窗内事件委托
+  document.querySelector('.modal').addEventListener('click', async ev => {
+    const t = ev.target.closest('[data-save-slot],[data-restore],[data-del-snap]');
+    if (!t) return;
+    if (t.dataset.saveSlot) {
+      try { await window.saveSnapshot('bobing_slot_' + t.dataset.saveSlot, S); toast(`已存入存档位 ${t.dataset.saveSlot} ✓`); await refreshBackupList(); }
+      catch (e) { toast('失败：' + e.message, 3000); }
+    } else if (t.dataset.restore) {
+      if (confirm('用这份备份覆盖当前数据？\n（会先自动存一份「恢复前」备份，可再撤回）')) await doRestore(t.dataset.restore);
+    } else if (t.dataset.delSnap) {
+      if (confirm('删除这份备份？')) { try { await window.deleteSnapshot(t.dataset.delSnap); await refreshBackupList(); toast('已删除'); } catch (e) { toast('失败：' + e.message, 3000); } }
+    }
+  });
+  await refreshBackupList();
+}
+
+async function refreshBackupList() {
+  _snaps = await window.loadSnapshots();
+  const slots = document.getElementById('slots');
+  const snaps = document.getElementById('snaps');
+  if (slots) slots.innerHTML = [1, 2, 3].map(i => {
+    const s = _snaps.find(x => x.name === 'bobing_slot_' + i);
+    return `<div class="slot-row">
+      <div class="slot-info"><b>存档位 ${i}</b><span class="sub-amt">${s ? fmtTime(s.created_at) + ' · ' + snapMeta(s.data) : '空'}</span></div>
+      <div class="slot-btns">
+        <button class="btn btn-teal btn-sm" data-save-slot="${i}">存入</button>
+        ${s ? `<button class="btn btn-ghost btn-sm" data-restore="${s.name}">恢复</button>` : ''}
+      </div></div>`;
+  }).join('');
+  if (snaps) {
+    const list = _snaps.filter(x => !x.name.startsWith('bobing_slot_'));
+    snaps.innerHTML = list.length ? list.map(s => `<div class="slot-row">
+      <div class="slot-info"><b>${friendlyName(s.name)}</b><span class="sub-amt">${fmtTime(s.created_at)} · ${snapMeta(s.data)}</span></div>
+      <div class="slot-btns">
+        <button class="btn btn-ghost btn-sm" data-restore="${s.name}">恢复</button>
+        <button class="btn btn-danger btn-sm" data-del-snap="${s.name}">🗑️</button>
+      </div></div>`).join('') : '<div class="sub-amt" style="padding:8px 2px">还没有历史备份</div>';
+  }
+}
+
+async function doRestore(name) {
+  const data = await window.getSnapshot(name);
+  if (!data || !data.people) { toast('读取失败'); return; }
+  try { await window.saveSnapshot('bobing_pre_restore_' + new Date().toISOString(), S); } catch (e) { console.warn(e); }
+  S = migrate(data);
+  saveLocal();
+  await window.saveToCloud(S);
+  closeModal(); render();
+  toast('已恢复 ✓');
 }
 
 /* ── 顶栏锁 ───────────────────────────────────────────── */

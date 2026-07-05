@@ -29,5 +29,47 @@ async function saveToCloud(payload) {
   return true;
 }
 
+// ─── 备份快照 ─────────────────────────────────────────────
+// 命名：bobing_slot_1/2/3（手动存档位）| bobing_auto_YYYY-MM-DD（每日自动）
+//       | bobing_pre_restore_<ISO>（恢复前安全备份）
+async function saveSnapshot(name, data) {
+  // 存档位 / 每日自动：先删同名，保证唯一不堆积
+  if (name.startsWith('bobing_slot_') || name.startsWith('bobing_auto_')) {
+    await window.sbClient.from('snapshots').delete().eq('name', name);
+  }
+  const { error } = await window.sbClient.from('snapshots').insert({ name, data });
+  if (error) throw new Error('备份失败: ' + error.message);
+}
+
+// 加载所有 bobing_ 快照（排除主数据 bobing_main）
+async function loadSnapshots() {
+  const { data, error } = await window.sbClient
+    .from('snapshots')
+    .select('id, name, data, created_at')
+    .like('name', 'bobing_%')
+    .neq('name', 'bobing_main')
+    .order('created_at', { ascending: false });
+  if (error) { console.warn('快照加载失败:', error.message); return []; }
+  return data || [];
+}
+
+// 读取单个快照数据
+async function getSnapshot(name) {
+  const { data, error } = await window.sbClient
+    .from('snapshots').select('data').eq('name', name).maybeSingle();
+  if (error) { console.warn('读取快照失败:', error.message); return null; }
+  return data?.data || null;
+}
+
+// 删除快照
+async function deleteSnapshot(name) {
+  const { error } = await window.sbClient.from('snapshots').delete().eq('name', name);
+  if (error) throw new Error('删除失败: ' + error.message);
+}
+
 window.loadFromCloud = loadFromCloud;
 window.saveToCloud = saveToCloud;
+window.saveSnapshot = saveSnapshot;
+window.loadSnapshots = loadSnapshots;
+window.getSnapshot = getSnapshot;
+window.deleteSnapshot = deleteSnapshot;
