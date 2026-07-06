@@ -466,8 +466,26 @@ function fmtTime(iso) {
 async function openBackupModal() {
   openModal(`
     <div class="modal-hd"><h3>🗂️ 备份管理</h3><button class="modal-close" data-close>✕</button></div>
+
+    <div class="field">
+      <label>本地导出 / 导入 <span class="sub">存成 JSON 文件，离线保存或换设备用</span></label>
+      <div class="row2">
+        <button class="btn btn-teal" id="export-local-btn">📤 导出到本地</button>
+        <button class="btn btn-gold" id="import-local-btn">📥 从本地导入</button>
+      </div>
+      <input type="file" id="import-local-file" accept="application/json,.json" class="hide">
+    </div>
+
     <div class="field"><label>手动存档位 <span class="sub">覆盖式，共 3 位</span></label><div id="slots" class="slot-list">加载中…</div></div>
     <div class="field"><label>历史备份 <span class="sub">每日自动 / 手动 / 恢复前</span></label><div id="snaps" class="slot-list">加载中…</div></div>`);
+
+  document.getElementById('export-local-btn').onclick = exportLocalBackup;
+  document.getElementById('import-local-btn').onclick = () => document.getElementById('import-local-file').click();
+  document.getElementById('import-local-file').onchange = ev => {
+    const file = ev.target.files[0];
+    ev.target.value = '';
+    if (file) importLocalBackup(file);
+  };
 
   // 弹窗内事件委托
   document.querySelector('.modal').addEventListener('click', async ev => {
@@ -483,6 +501,32 @@ async function openBackupModal() {
     }
   });
   await refreshBackupList();
+}
+
+/* ── 本地导出 / 导入（纯浏览器文件操作，不经过云端） ─────── */
+function exportLocalBackup() {
+  const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `bobing-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('已导出到本地 ✓');
+}
+
+function importLocalBackup(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    let data;
+    try { data = JSON.parse(reader.result); } catch (e) { toast('不是有效的 JSON 文件'); return; }
+    if (!data || !Array.isArray(data.people)) { toast('文件内容不像是博饼分账的备份数据'); return; }
+    if (!confirm('导入这份本地备份会覆盖当前数据？\n（会先自动存一份「恢复前」云端备份，可再撤回）')) return;
+    await applyRestoredData(data);
+    toast('本地备份已导入 ✓');
+  };
+  reader.onerror = () => toast('文件读取失败');
+  reader.readAsText(file);
 }
 
 async function refreshBackupList() {
@@ -512,12 +556,17 @@ async function refreshBackupList() {
 async function doRestore(name) {
   const data = await window.getSnapshot(name);
   if (!data || !data.people) { toast('读取失败'); return; }
+  await applyRestoredData(data);
+  toast('已恢复 ✓');
+}
+
+/* 恢复前先存一份安全备份，再用给定数据整体替换当前状态（本地+云端） */
+async function applyRestoredData(data) {
   try { await window.saveSnapshot('bobing_pre_restore_' + new Date().toISOString(), S); } catch (e) { console.warn(e); }
   S = migrate(data);
   saveLocal();
   await window.saveToCloud(S);
   closeModal(); render();
-  toast('已恢复 ✓');
 }
 
 /* ── 顶栏锁 ───────────────────────────────────────────── */
