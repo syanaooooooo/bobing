@@ -431,6 +431,7 @@ body {
 .balance-warn { font-size: 12px; margin-top: 6px; }
 .balance-warn.bad { color: var(--red); }
 .balance-warn.ok  { color: var(--emerald); }
+.balance-warn.info { color: var(--ink-soft); }
 
 /* toast */
 #toast-root { position: fixed; left: 0; right: 0; bottom: 96px; z-index: 200; display: flex; justify-content: center; pointer-events: none; }

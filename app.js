@@ -123,14 +123,18 @@ async function autoBackup() {
   } catch (e) { console.warn(e); }
 }
 
-/* ── 分账核心：把博饼当成一笔虚拟支出 ─────────────────── */
-function prizeCost(p) { return (+p.unit || 0) * (+p.qty || 0); }
-function bobingTotal() { return S.bobing.prizes.reduce((s, p) => s + prizeCost(p), 0); }
+/* ── 分账核心：把博饼当成一笔虚拟支出 ───────────────────
+   单价×数量算出的是「标价参考」（预算/guideline），不是强制要对上的硬性数字。
+   真正拿去结算分账的，是每个负责人在「负责人」编辑框里填的实际花费——
+   结算金额 = 全部 buyers.paid 之和，天然和 bobingPayers() 对得上，
+   不需要额外校验、也不会有「账不平」这种情况。 */
+function prizeCost(p) { return (+p.unit || 0) * (+p.qty || 0); }         // 标价参考（单价×数量）
+function bobingBudget() { return S.bobing.prizes.reduce((s, p) => s + prizeCost(p), 0); } // 标价参考总额
 
-/* 每个奖的 buyers = [{person, paid}]，各人金额独立填写（不再假设平摊） */
+/* 每个奖的 buyers = [{person, paid}]，各人实际花费独立填写 */
 function prizeAssigned(p) { return (p.buyers || []).reduce((s, b) => s + (+b?.paid || 0), 0); }
 
-/* 由各奖 buyers 汇总出每人的垫付总额 */
+/* 由各奖 buyers 汇总出每人的实际垫付总额 */
 function bobingPayers() {
   const m = {};
   for (const p of S.bobing.prizes) {
@@ -141,11 +145,14 @@ function bobingPayers() {
   }
   return Object.entries(m).map(([person, paid]) => ({ person, paid }));
 }
-/* 尚未凑够的奖金（没人负责，或几人金额加起来还不够该奖总价），会导致账不平 */
+/* 实际总花费 = 所有负责人已填金额之和，这才是真正用来分账的数字 */
+function bobingActualTotal() { return S.bobing.prizes.reduce((s, p) => s + prizeAssigned(p), 0); }
+
+/* 还没登记花费的奖金（纯提示，不影响已登记部分的结算） */
 function bobingUnassigned() {
   return S.bobing.prizes.reduce((s, p) => s + Math.max(0, prizeCost(p) - prizeAssigned(p)), 0);
 }
-/* 超额的奖金（几人加起来的钱比该奖总价还多，同样要提示改正） */
+/* 登记花费比标价参考高出的部分（比如实际买贵了，纯提示） */
 function bobingOverassigned() {
   return S.bobing.prizes.reduce((s, p) => s + Math.max(0, prizeAssigned(p) - prizeCost(p)), 0);
 }
@@ -153,7 +160,7 @@ function bobingOverassigned() {
 function bobingItem() {
   return {
     id: 'bobing', title: '博饼奖金池', category: 'bobing',
-    amount: bobingTotal(),
+    amount: bobingActualTotal(),  // 按实际登记的花费分账，不是标价参考
     payers: bobingPayers(),
     split: { mode: 'equal', among: S.bobing.participants || [] },
   };
@@ -297,18 +304,19 @@ function viewOverview() {
 /* ── 博饼奖表 ─────────────────────────────────────────── */
 function viewBobing() {
   const b = S.bobing;
-  const total = bobingTotal();
+  const budget = bobingBudget();     // 标价参考（单价×数量），仅供参考
+  const actual = bobingActualTotal(); // 实际登记的花费，真正用来分账
   const parts = (b.participants || []).length || 1;
   const rows = b.prizes.map((p, i) => {
     const medal = RANK_MEDALS[p.rank] || '🎲';
     const bs = (p.buyers || []).filter(x => x?.person);
     const cost = prizeCost(p);
     const assigned = prizeAssigned(p);
-    const mismatch = bs.length && Math.abs(assigned - cost) > 0.005;
+    const diff = Math.round((cost - assigned) * 100) / 100;
     let owner;
-    if (!bs.length) owner = `<span style="color:var(--red)">未定</span>`;
+    if (!bs.length) owner = `<span style="color:var(--ink-soft)">未登记</span>`;
     else owner = bs.map(b2 => `${esc(personName(b2.person))} <span class="sub-amt">${money(b2.paid)}</span>`).join('<br>');
-    if (mismatch) owner += `<br><span style="color:var(--red);font-size:11px">⚠️ 差${money(Math.abs(cost - assigned))}</span>`;
+    if (bs.length && Math.abs(diff) > 0.005) owner += `<br><span class="sub-amt">与标价差${money(Math.abs(diff))}</span>`;
     return `<tr>
       <td class="rank"><span class="medal">${medal}</span>${esc(p.rank)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="decimal" data-prize="${i}" data-k="unit" value="${p.unit}">` : money(p.unit)}</td>
@@ -323,7 +331,6 @@ function viewBobing() {
     ? payers.map(p => `${esc(personName(p.person))} ${money(p.paid)}`).join('、')
     : '未设置';
   const unassigned = bobingUnassigned();
-  const overassigned = bobingOverassigned();
 
   return `
     <div class="section-hd"><h2><span>🎲</span>博饼采购</h2>
@@ -334,17 +341,17 @@ function viewBobing() {
       <table class="prize-table">
         <thead><tr><th>奖等</th><th>单价</th><th>数量</th><th>单项总价</th><th>负责人</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr><td class="rank">合计</td><td></td><td></td><td>${money(total)}</td><td></td></tr></tfoot>
+        <tfoot><tr><td class="rank">合计</td><td></td><td></td><td>${money(budget)}</td><td></td></tr></tfoot>
       </table>
 
       <div class="prize-foot">
-        <div class="stat"><div class="val">${money(total)}</div><div class="lab">奖金总额</div></div>
-        <div class="stat gold"><div class="val">${money(total / parts)}</div><div class="lab">人均分摊</div></div>
+        <div class="stat"><div class="val">${money(actual)}</div><div class="lab">实际花费</div></div>
+        <div class="stat gold"><div class="val">${money(actual / parts)}</div><div class="lab">人均分摊</div></div>
         <div class="stat teal"><div class="val">${parts}</div><div class="lab">参与人数</div></div>
       </div>
+      ${Math.abs(actual - budget) > 0.005 ? `<p style="font-size:12px;color:var(--ink-soft);margin:8px 2px 0">标价参考 ${money(budget)}（单价×数量），仅供参考，实际以负责人登记的花费为准</p>` : ''}
 
-      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金没人认领，账会不平</div>` : ''}
-      ${overassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:6px">⚠️ 有 ${money(overassigned)} 认领超额，某个奖的负责人金额加起来超过了单项总价</div>` : ''}
+      ${unassigned > 0.005 ? `<p style="font-size:12px;color:var(--ink-soft);margin:8px 2px 0">还有 ${money(unassigned)} 奖金（按标价算）还没登记负责人，登记后自动计入分账</p>` : ''}
       <div class="charge-row" style="background:rgba(23,163,152,.10);margin-top:12px">
         <span>💵</span><span class="lab" style="color:var(--teal-deep)">合计垫付：</span><span>${payerTxt}</span>
       </div>
@@ -873,16 +880,16 @@ function payerRow(p, amt) {
     <input class="amt-in" type="number" inputmode="decimal" placeholder="垫付" value="${on ? amt : ''}"></div>`;
 }
 
-/* ── 博饼参与人设置（谁平摊奖金池；各奖购买负责人在「成员」页设置）── */
+/* ── 博饼参与人设置（谁平摊奖金池；各奖购买负责人在「博饼采购」页设置）── */
 function openBobingSetup() {
   const b = S.bobing;
   const parts = new Set(b.participants || []);
-  const total = bobingTotal();
+  const actual = bobingActualTotal();
 
   const html = `
     <div class="modal-hd"><h3>⚙️ 参与人设置</h3><button class="modal-close" data-close>✕</button></div>
     <div class="field">
-      <label>参与平摊的人 <span class="sub">奖金池 ${money(total)} 按这些人均分</span></label>
+      <label>参与平摊的人 <span class="sub">已登记的实际花费 ${money(actual)} 按这些人均分</span></label>
       <div class="pick-list" id="b-parts">
         ${S.people.map(p => `<div class="pick ${parts.has(p.id) ? 'on' : ''}" data-pid="${p.id}">
           <span class="box">${parts.has(p.id) ? '✓' : ''}</span><span class="nm">${esc(p.name)}</span></div>`).join('')}
@@ -904,9 +911,9 @@ function openBobingSetup() {
 }
 
 /* ── 单个奖的购买负责人 + 各自实际花费（点表格「负责人」格子进来）───
-   同一个奖可以多人负责（比如一秀 32 个分给两人各买一部分），
-   每人花费单独填写，不再假设平摊；保存前校验合计 = 该奖单项总价，
-   和账目页「谁付的钱」用的是同一套校验逻辑，保证账目对得上。 */
+   同一个奖可以多人负责（比如一秀 32 个分给两人各买一部分），每人花费独立
+   填写，不再假设平摊。单价×数量算出的单项总价只是标价参考，不强制对上——
+   结算永远按这里填的实际金额算，多退少补都不影响账目正确性。 */
 function openPrizeBuyersModal(i) {
   const p = S.bobing.prizes[i];
   const cost = prizeCost(p);
@@ -916,7 +923,7 @@ function openPrizeBuyersModal(i) {
   openModal(`
     <div class="modal-hd"><h3>${medal} ${esc(p.rank)} 负责人</h3><button class="modal-close" data-close>✕</button></div>
     <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px">
-      勾选负责买这个奖的人，填各自实际花了多少；如果是两人分别买了一部分，两人金额可以不一样，合计需等于单项总价 ${money(cost)}。
+      勾选负责买这个奖的人，填各自实际花了多少；如果是两人分别买了一部分，两人金额可以不一样。标价参考 ${money(cost)}，实际花费不用刚好对上，多退少补也没关系。
     </p>
     <div class="pick-list" id="pb-list">${S.people.map(pp => payerRow(pp, payMap[pp.id])).join('')}</div>
     <div class="pick-tools"><span class="mini-link" id="pb-even">已勾选的平均分</span></div>
@@ -952,8 +959,10 @@ function openPrizeBuyersModal(i) {
     let sum = 0; document.querySelectorAll('#pb-list .pick.on .amt-in').forEach(inp => sum += +inp.value || 0);
     const w = $('#pb-warn');
     const diff = Math.round((cost - sum) * 100) / 100;
-    if (Math.abs(diff) < 0.01) { w.className = 'balance-warn ok'; w.textContent = `✓ 合计 ${money(sum)} = 单项总价`; }
-    else { w.className = 'balance-warn bad'; w.textContent = `合计 ${money(sum)}，与单项总价差 ${money(Math.abs(diff))}`; }
+    w.className = 'balance-warn info';
+    w.textContent = Math.abs(diff) < 0.01
+      ? `合计 ${money(sum)}，与标价参考一致`
+      : `合计 ${money(sum)}，与标价参考差 ${money(Math.abs(diff))}（仅供参考，可以保存）`;
   }
   syncWarn();
 
@@ -961,8 +970,6 @@ function openPrizeBuyersModal(i) {
     const buyers = [...document.querySelectorAll('#pb-list .pick.on')].map(row => ({
       person: row.dataset.pid, paid: Math.round((+row.querySelector('.amt-in').value || 0) * 100) / 100,
     })).filter(b => b.paid > 0);
-    const sum = buyers.reduce((a, b) => a + b.paid, 0);
-    if (buyers.length && Math.abs(sum - cost) > 0.01) { toast('合计要等于单项总价'); return; }
     p.buyers = buyers;
     closeModal(); commit('负责人已保存 ✓');
   };
