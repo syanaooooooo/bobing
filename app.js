@@ -68,14 +68,14 @@ function seed() {
     admin_hash: '',                 // 首次解锁时设置
     people,
     bobing: {
-      // 每个奖等自带购买负责人 buyers；一秀/二举各 2 人平分该奖数量
+      // 每个奖等自带购买负责人 buyers = [{person, paid}]，各人金额独立填写
       prizes: [
-        { rank: '状元', unit: 100, qty: 1,  buyers: [chargeId] },
-        { rank: '对堂', unit: 55,  qty: 2,  buyers: [chargeId] },
-        { rank: '三红', unit: 25,  qty: 4,  buyers: [chargeId] },
-        { rank: '四进', unit: 15,  qty: 8,  buyers: [chargeId] },
-        { rank: '二举', unit: 3,   qty: 16, buyers: [chargeId, ''] },
-        { rank: '一秀', unit: 1,   qty: 32, buyers: [chargeId, ''] },
+        { rank: '状元', unit: 100, qty: 1,  buyers: [{ person: chargeId, paid: 100 }] },
+        { rank: '对堂', unit: 55,  qty: 2,  buyers: [{ person: chargeId, paid: 110 }] },
+        { rank: '三红', unit: 25,  qty: 4,  buyers: [{ person: chargeId, paid: 100 }] },
+        { rank: '四进', unit: 15,  qty: 8,  buyers: [{ person: chargeId, paid: 120 }] },
+        { rank: '二举', unit: 3,   qty: 16, buyers: [{ person: chargeId, paid: 48 }] },
+        { rank: '一秀', unit: 1,   qty: 32, buyers: [{ person: chargeId, paid: 32 }] },
       ],
       participants: people.map(p => p.id),          // 8 人平摊 → 人均 63.75
     },
@@ -127,20 +127,27 @@ async function autoBackup() {
 function prizeCost(p) { return (+p.unit || 0) * (+p.qty || 0); }
 function bobingTotal() { return S.bobing.prizes.reduce((s, p) => s + prizeCost(p), 0); }
 
-/* 由各奖 buyers 推导出每人的垫付总额（一个奖多个负责人 → 均分该奖金额） */
+/* 每个奖的 buyers = [{person, paid}]，各人金额独立填写（不再假设平摊） */
+function prizeAssigned(p) { return (p.buyers || []).reduce((s, b) => s + (+b?.paid || 0), 0); }
+
+/* 由各奖 buyers 汇总出每人的垫付总额 */
 function bobingPayers() {
   const m = {};
   for (const p of S.bobing.prizes) {
-    const bs = (p.buyers || []).filter(Boolean);
-    if (!bs.length) continue;
-    const each = prizeCost(p) / bs.length;
-    bs.forEach(pid => m[pid] = (m[pid] || 0) + each);
+    for (const b of (p.buyers || [])) {
+      if (!b?.person || !(+b.paid > 0)) continue;
+      m[b.person] = (m[b.person] || 0) + (+b.paid);
+    }
   }
   return Object.entries(m).map(([person, paid]) => ({ person, paid }));
 }
-/* 尚未指定负责人的奖金（无人垫付，会导致账不平，用于提示） */
+/* 尚未凑够的奖金（没人负责，或几人金额加起来还不够该奖总价），会导致账不平 */
 function bobingUnassigned() {
-  return S.bobing.prizes.reduce((s, p) => s + ((p.buyers || []).filter(Boolean).length ? 0 : prizeCost(p)), 0);
+  return S.bobing.prizes.reduce((s, p) => s + Math.max(0, prizeCost(p) - prizeAssigned(p)), 0);
+}
+/* 超额的奖金（几人加起来的钱比该奖总价还多，同样要提示改正） */
+function bobingOverassigned() {
+  return S.bobing.prizes.reduce((s, p) => s + Math.max(0, prizeAssigned(p) - prizeCost(p)), 0);
 }
 
 function bobingItem() {
@@ -294,14 +301,20 @@ function viewBobing() {
   const parts = (b.participants || []).length || 1;
   const rows = b.prizes.map((p, i) => {
     const medal = RANK_MEDALS[p.rank] || '🎲';
-    const bs = (p.buyers || []).filter(Boolean);
-    const owner = bs.length ? bs.map(pid => esc(personName(pid))).join('/') : `<span style="color:var(--red)">未定</span>`;
+    const bs = (p.buyers || []).filter(x => x?.person);
+    const cost = prizeCost(p);
+    const assigned = prizeAssigned(p);
+    const mismatch = bs.length && Math.abs(assigned - cost) > 0.005;
+    let owner;
+    if (!bs.length) owner = `<span style="color:var(--red)">未定</span>`;
+    else owner = bs.map(b2 => `${esc(personName(b2.person))} <span class="sub-amt">${money(b2.paid)}</span>`).join('<br>');
+    if (mismatch) owner += `<br><span style="color:var(--red);font-size:11px">⚠️ 差${money(Math.abs(cost - assigned))}</span>`;
     return `<tr>
       <td class="rank"><span class="medal">${medal}</span>${esc(p.rank)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="decimal" data-prize="${i}" data-k="unit" value="${p.unit}">` : money(p.unit)}</td>
       <td>${isAdmin ? `<input class="mini-input" type="number" inputmode="numeric" data-prize="${i}" data-k="qty" value="${p.qty}">` : p.qty}</td>
-      <td><b>${money(prizeCost(p))}</b></td>
-      <td class="owner">${owner}</td>
+      <td><b>${money(cost)}</b></td>
+      <td class="owner${isAdmin ? ' editable' : ''}"${isAdmin ? ` data-edit-prize="${i}"` : ''}>${owner}${isAdmin ? ' <span class="edit-ic">✏️</span>' : ''}</td>
     </tr>`;
   }).join('');
 
@@ -310,6 +323,7 @@ function viewBobing() {
     ? payers.map(p => `${esc(personName(p.person))} ${money(p.paid)}`).join('、')
     : '未设置';
   const unassigned = bobingUnassigned();
+  const overassigned = bobingOverassigned();
 
   return `
     <div class="section-hd"><h2><span>🎲</span>博饼采购</h2>
@@ -329,13 +343,14 @@ function viewBobing() {
         <div class="stat teal"><div class="val">${parts}</div><div class="lab">参与人数</div></div>
       </div>
 
-      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金未指定负责人，账会不平 · 去「成员」页设置</div>` : ''}
+      ${unassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:10px">⚠️ 还有 ${money(unassigned)} 奖金没人认领，账会不平</div>` : ''}
+      ${overassigned > 0.005 ? `<div class="balance-warn bad" style="margin-top:6px">⚠️ 有 ${money(overassigned)} 认领超额，某个奖的负责人金额加起来超过了单项总价</div>` : ''}
       <div class="charge-row" style="background:rgba(23,163,152,.10);margin-top:12px">
         <span>💵</span><span class="lab" style="color:var(--teal-deep)">合计垫付：</span><span>${payerTxt}</span>
       </div>
     </div>
 
-    <div class="readonly-note">负责人在「🐚 成员」页设置 · ${isAdmin ? '改单价/数量即时生效' : '仅管理员可编辑'}</div>`;
+    <div class="readonly-note">${isAdmin ? '点「负责人」这一格可编辑每人具体花了多少 · 改单价/数量即时生效' : '仅管理员可编辑'}</div>`;
 }
 
 /* ── 账目 ─────────────────────────────────────────────── */
@@ -384,17 +399,19 @@ function expCard(e) {
 /* ── 成员 ─────────────────────────────────────────────── */
 function viewPeople() {
   const rows = S.people.map(p => {
-    const ranks = S.bobing.prizes.filter(pr => (pr.buyers || []).includes(p.id)).map(pr => pr.rank);
+    const mine = S.bobing.prizes
+      .map(pr => ({ rank: pr.rank, paid: (pr.buyers || []).find(b => b?.person === p.id)?.paid }))
+      .filter(x => x.paid > 0);
+    const chargeTxt = mine.map(x => `${x.rank} ${money(x.paid)}`).join(' · ');
     return `
     <div class="person-row">
       <span class="avatar" style="background:${avatarColor(p.id)}">${avatarEmoji(p.id)}</span>
       <div class="person-main">
         <span class="nm">${esc(p.name)}</span>
-        ${ranks.length ? `<span class="tag-charge">🛒 负责 ${ranks.map(esc).join('/')}</span>` : ''}
+        ${chargeTxt ? `<span class="tag-charge">🛒 ${esc(chargeTxt)}</span>` : ''}
       </div>
       <div class="person-btns">
-        ${isAdmin ? `<button class="btn btn-teal btn-sm" data-act="person-prizes" data-id="${p.id}">🎲 负责奖项</button>
-          <button class="btn btn-ghost btn-sm" data-act="edit-person" data-id="${p.id}">✏️</button>
+        ${isAdmin ? `<button class="btn btn-ghost btn-sm" data-act="edit-person" data-id="${p.id}">✏️</button>
           <button class="btn btn-danger btn-sm" data-act="del-person" data-id="${p.id}">🗑️</button>` : ''}
       </div>
     </div>`;
@@ -403,7 +420,8 @@ function viewPeople() {
     <div class="section-hd"><h2><span>🐚</span>成员管理 <span style="font-size:12px;color:var(--ink-soft)">(${S.people.length})</span></h2></div>
     ${rows}
     ${isAdmin ? '<button class="btn btn-gold btn-block" data-act="add-person" style="margin-top:8px">➕ 添加成员</button>'
-              : '<div class="readonly-note">点右上角 🔒 解锁后可增删成员</div>'}`;
+              : '<div class="readonly-note">点右上角 🔒 解锁后可增删成员</div>'}
+    <div class="readonly-note">🛒 标签是各人负责购买的奖等和花费，去「博饼采购」页点对应奖的「负责人」格子编辑</div>`;
 }
 
 /* ============================================================
@@ -417,6 +435,10 @@ function bindDynamic() {
       S.bobing.prizes[i][k] = k === 'qty' ? Math.max(0, Math.round(+inp.value || 0)) : Math.max(0, +inp.value || 0);
       commit('博饼奖表已更新');
     });
+  });
+  // 点「负责人」格子编辑该奖的购买负责人与各自金额
+  document.querySelectorAll('[data-edit-prize]').forEach(td => {
+    td.addEventListener('click', () => openPrizeBuyersModal(+td.dataset.editPrize));
   });
   // data-act 统一委托
   document.getElementById('content').onclick = onActionClick;
@@ -434,7 +456,6 @@ function onActionClick(ev) {
   else if (act === 'edit-person') openPersonModal(S.people.find(p => p.id === id));
   else if (act === 'del-person') delPerson(id);
   else if (act === 'bobing-setup') openBobingSetup();
-  else if (act === 'person-prizes') openPersonPrizesModal(id);
   else if (act === 'quick-backup') quickBackup();
   else if (act === 'open-backup') openBackupModal();
 }
@@ -882,38 +903,68 @@ function openBobingSetup() {
   };
 }
 
-/* ── 各奖购买负责人设置（从「成员」页某人点进来，勾选 TA 负责哪些奖）── */
-function openPersonPrizesModal(personId) {
-  const rows = S.bobing.prizes.map((p, i) => {
-    const on = (p.buyers || []).includes(personId);
-    const medal = RANK_MEDALS[p.rank] || '🎲';
-    const bs = (p.buyers || []).filter(Boolean);
-    const shareTxt = on && bs.length > 1 ? `<span class="sub-amt">与 ${bs.filter(x => x !== personId).map(personName).join('/')} 平分</span>` : '';
-    return `<div class="pick ${on ? 'on' : ''}" data-i="${i}">
-      <span class="box">${on ? '✓' : ''}</span>
-      <span class="nm">${medal} ${esc(p.rank)} <span class="sub-amt">${money(prizeCost(p))}</span>${shareTxt}</span>
-    </div>`;
-  });
-  openModal(`
-    <div class="modal-hd"><h3>🎲 ${esc(personName(personId))} 负责购买</h3><button class="modal-close" data-close>✕</button></div>
-    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px">勾选 TA 负责购买的奖等；一个奖多人勾选则平分那笔钱。</p>
-    <div class="pick-list" id="pp-list">${rows.join('')}</div>
-    <button class="btn btn-primary btn-block" id="pp-save" style="margin-top:14px">保存</button>`);
+/* ── 单个奖的购买负责人 + 各自实际花费（点表格「负责人」格子进来）───
+   同一个奖可以多人负责（比如一秀 32 个分给两人各买一部分），
+   每人花费单独填写，不再假设平摊；保存前校验合计 = 该奖单项总价，
+   和账目页「谁付的钱」用的是同一套校验逻辑，保证账目对得上。 */
+function openPrizeBuyersModal(i) {
+  const p = S.bobing.prizes[i];
+  const cost = prizeCost(p);
+  const medal = RANK_MEDALS[p.rank] || '🎲';
+  const payMap = Object.fromEntries((p.buyers || []).filter(b => b?.person).map(b => [b.person, b.paid]));
 
-  document.getElementById('pp-list').onclick = ev => {
-    const r = ev.target.closest('.pick'); if (!r) return;
-    r.classList.toggle('on');
-    r.querySelector('.box').textContent = r.classList.contains('on') ? '✓' : '';
+  openModal(`
+    <div class="modal-hd"><h3>${medal} ${esc(p.rank)} 负责人</h3><button class="modal-close" data-close>✕</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px">
+      勾选负责买这个奖的人，填各自实际花了多少；如果是两人分别买了一部分，两人金额可以不一样，合计需等于单项总价 ${money(cost)}。
+    </p>
+    <div class="pick-list" id="pb-list">${S.people.map(pp => payerRow(pp, payMap[pp.id])).join('')}</div>
+    <div class="pick-tools"><span class="mini-link" id="pb-even">已勾选的平均分</span></div>
+    <div class="balance-warn" id="pb-warn"></div>
+    <button class="btn btn-primary btn-block" id="pb-save" style="margin-top:14px">保存</button>`);
+
+  const $ = s => document.querySelector(s);
+
+  $('#pb-list').onclick = ev => {
+    const row = ev.target.closest('.pick'); if (!row || ev.target.classList.contains('amt-in')) return;
+    const on = !row.classList.contains('on');
+    row.classList.toggle('on', on);
+    row.querySelector('.box').textContent = on ? '✓' : '';
+    if (!on) row.querySelector('.amt-in').value = '';
+    syncWarn();
   };
-  document.getElementById('pp-save').onclick = () => {
-    document.querySelectorAll('#pp-list .pick').forEach(r => {
-      const p = S.bobing.prizes[+r.dataset.i];
-      const on = r.classList.contains('on');
-      const bs = new Set((p.buyers || []).filter(Boolean));
-      if (on) bs.add(personId); else bs.delete(personId);
-      p.buyers = [...bs];
+  $('#pb-list').addEventListener('input', ev => { if (ev.target.classList.contains('amt-in')) syncWarn(); });
+
+  $('#pb-even').onclick = () => {
+    const checked = [...document.querySelectorAll('#pb-list .pick.on')].map(x => x.dataset.pid);
+    const use = checked.length ? checked : S.people.map(pp => pp.id);
+    const each = Math.round((cost / use.length) * 100) / 100;
+    document.querySelectorAll('#pb-list .pick').forEach(row => {
+      const on = use.includes(row.dataset.pid);
+      row.classList.toggle('on', on);
+      row.querySelector('.box').textContent = on ? '✓' : '';
+      row.querySelector('.amt-in').value = on ? each : '';
     });
-    closeModal(); commit('负责奖项已保存 ✓');
+    syncWarn();
+  };
+
+  function syncWarn() {
+    let sum = 0; document.querySelectorAll('#pb-list .pick.on .amt-in').forEach(inp => sum += +inp.value || 0);
+    const w = $('#pb-warn');
+    const diff = Math.round((cost - sum) * 100) / 100;
+    if (Math.abs(diff) < 0.01) { w.className = 'balance-warn ok'; w.textContent = `✓ 合计 ${money(sum)} = 单项总价`; }
+    else { w.className = 'balance-warn bad'; w.textContent = `合计 ${money(sum)}，与单项总价差 ${money(Math.abs(diff))}`; }
+  }
+  syncWarn();
+
+  $('#pb-save').onclick = () => {
+    const buyers = [...document.querySelectorAll('#pb-list .pick.on')].map(row => ({
+      person: row.dataset.pid, paid: Math.round((+row.querySelector('.amt-in').value || 0) * 100) / 100,
+    })).filter(b => b.paid > 0);
+    const sum = buyers.reduce((a, b) => a + b.paid, 0);
+    if (buyers.length && Math.abs(sum - cost) > 0.01) { toast('合计要等于单项总价'); return; }
+    p.buyers = buyers;
+    closeModal(); commit('负责人已保存 ✓');
   };
 }
 
@@ -939,12 +990,12 @@ function openPersonModal(person) {
 function delPerson(id) {
   if (S.people.length <= 1) { toast('至少保留一名成员'); return; }
   const used = S.expenses.some(e => (e.payers || []).some(p => p.person === id) ||
-    Object.keys(sharesOf(e)).includes(id)) || S.bobing.prizes.some(p => (p.buyers || []).includes(id));
+    Object.keys(sharesOf(e)).includes(id)) || S.bobing.prizes.some(p => (p.buyers || []).some(b => b?.person === id));
   const name = personName(id);
   if (!confirm(`删除「${name}」？${used ? '\n⚠️ TA 出现在某些账目/购奖里，删除后那些账的分摊会变。' : ''}`)) return;
   S.people = S.people.filter(p => p.id !== id);
   S.bobing.participants = (S.bobing.participants || []).filter(x => x !== id);
-  S.bobing.prizes.forEach(p => { p.buyers = (p.buyers || []).filter(x => x !== id); }); // 清理购奖负责人
+  S.bobing.prizes.forEach(p => { p.buyers = (p.buyers || []).filter(b => b?.person !== id); }); // 清理购奖负责人
   // 清理账目引用
   S.expenses.forEach(e => {
     e.payers = (e.payers || []).filter(p => p.person !== id);
@@ -975,14 +1026,24 @@ function toast(msg, ms = 1800) {
   toastTimer = setTimeout(() => root.innerHTML = '', ms);
 }
 
-/* 迁移旧数据结构：老版本用 bobing.person_in_charge + bobing.payers，
-   新版本改为每个奖 prize.buyers[]。缺 buyers 时用旧负责人补齐。 */
+/* 迁移旧数据结构：
+   v1 老版本用 bobing.person_in_charge + bobing.payers（整个奖金池统一垫付）
+   v2 中间版本用 prize.buyers = [id, id]（隐含平摊）
+   v3 现在用 prize.buyers = [{person, paid}]（各人金额独立填写，不假设平摊） */
 function migrate(data) {
   if (!data?.bobing?.prizes) return data;
   const b = data.bobing;
   const fallback = b.person_in_charge || (b.payers || [])[0]?.person || '';
   b.prizes.forEach(p => {
     if (!Array.isArray(p.buyers)) p.buyers = fallback ? [fallback] : [];
+    // v2 → v3：纯 id 数组（隐含平摊）转成 {person, paid}，保留原本平摊出的金额
+    if (p.buyers.length && typeof p.buyers[0] === 'string') {
+      const ids = p.buyers.filter(Boolean);
+      const each = ids.length ? Math.round((prizeCost(p) / ids.length) * 100) / 100 : 0;
+      p.buyers = ids.map(id => ({ person: id, paid: each }));
+    }
+    // 兜底：丢掉没有 person 或金额非正数的脏数据
+    p.buyers = p.buyers.filter(x => x?.person && +x.paid > 0);
   });
   delete b.person_in_charge; delete b.payers;
   // 旧标题/副标题一次性纠正为精简版

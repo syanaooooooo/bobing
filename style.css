@@ -227,7 +227,10 @@ body {
 }
 .charge-row .lab { color: var(--red-deep); font-weight: 700; }
 
-.prize-table td.owner { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
+.prize-table td.owner { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+.prize-table td.owner.editable { cursor: pointer; }
+.prize-table td.owner.editable:active { background: rgba(23,163,152,.12); }
+.prize-table td.owner .edit-ic { font-size: 10px; opacity: .55; }
 .sub-amt { color: var(--ink-soft); font-size: 12px; margin-left: 6px; }
 
 /* 博饼设置：各奖负责人选择 */
